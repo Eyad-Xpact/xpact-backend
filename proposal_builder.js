@@ -56,7 +56,7 @@ function sectionTag(slide, num, label) {
   });
 }
 
-function buildProposal(data, outputPath) {
+async function buildProposal(data, outputPath) {
   const pres = new PptxGenJS();
   pres.layout = 'LAYOUT_16x9';
   pres.title = (data.event_name || 'Proposal') + ' | XPACT';
@@ -489,8 +489,8 @@ function buildProposal(data, outputPath) {
     s.addText(eventName, { x:6, y:3.75, w:3.5, h:0.55, fontSize:10, fontFace:isArabic?FONT_AR:FONT, color:C.mint, align:'center', bold:true, margin:0, rtlMode:isArabic });
   }
 
-  pres.writeFile({ fileName: outputPath });
-  console.log('Done: ' + outputPath);
+  await pres.writeFile({ fileName: outputPath });
+console.log('Done: ' + outputPath);
 }
 
 
