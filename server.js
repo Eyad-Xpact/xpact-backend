@@ -29,7 +29,7 @@ app.post('/generate-pptx', async (req, res) => {
     }
 
     const tmpPptx = path.join(os.tmpdir(), 'proposal_' + Date.now() + '.pptx');
-    buildProposal(data, tmpPptx);
+   await buildProposal(data, tmpPptx);
 
     const pptxBuffer = fs.readFileSync(tmpPptx);
     const filename = (data.event_name || 'Proposal').replace(/[^\w\u0600-\u06FF]/g, '_') + '_Proposal.pptx';
