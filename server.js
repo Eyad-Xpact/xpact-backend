@@ -6,13 +6,13 @@ const fs = require('fs');
 const os = require('os');
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
 
 // Load assets
 const IMGS = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/images.json'), 'utf8'));
 
-// Load buildProposal - inline require from app directory
+// Load buildProposal
 const { buildProposal } = require('./proposal_builder.js');
 
 // Health check
@@ -46,5 +46,6 @@ app.post('/generate-pptx', async (req, res) => {
   }
 });
 
+// Listen on 0.0.0.0 for Railway
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('XPACT API on port ' + PORT));
+app.listen(PORT, '0.0.0.0', () => console.log('XPACT API on port ' + PORT));
