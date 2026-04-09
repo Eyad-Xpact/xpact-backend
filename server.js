@@ -4,23 +4,16 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const PptxGenJS = require('pptxgenjs');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Load image assets
+// Load assets
 const IMGS = JSON.parse(fs.readFileSync(path.join(__dirname, 'assets/images.json'), 'utf8'));
 
-// Import buildProposal from generate_proposal.js
-// We re-read and eval so we can pass IMGS without file I/O
-const genCode = fs.readFileSync(path.join(__dirname, 'generate_proposal.js'), 'utf8');
-// Remove the CLI block at the bottom
-const moduleCode = genCode.replace(/\nconst args = process\.argv[\s\S]*$/, '\nmodule.exports = { buildProposal };');
-const tmpModule = path.join(os.tmpdir(), 'gen_module.js');
-fs.writeFileSync(tmpModule, moduleCode);
-const { buildProposal } = require(tmpModule);
+// Load buildProposal - inline require from app directory
+const { buildProposal } = require('./proposal_builder.js');
 
 // Health check
 app.get('/', (req, res) => {
