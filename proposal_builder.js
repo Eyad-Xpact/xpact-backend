@@ -48,7 +48,8 @@ function logo(slide) {
 
 function sectionTag(slide, num, label) {
   const arabic = isArabicText(label);
-  slide.addText(num + '  /  ' + label.toUpperCase(), {
+  const text = arabic ? (label.toUpperCase() + '  /  ' + num) : (num + '  /  ' + label.toUpperCase());
+slide.addText(text, {
     x:0.4, y:0.06, w:9.3, h:0.28, fontSize:7.5,
     fontFace: arabic ? FONT_AR : FONT,
     color:C.mint, bold:true, charSpacing: arabic ? 0 : 2,
