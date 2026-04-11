@@ -20,26 +20,39 @@ app.get('/', (req, res) => {
 // Translate a single text to Arabic using Anthropic API
 async function translateToArabic(text, apiKey) {
   if (!text || text.length < 10) return text;
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1000,
+      system: 'Translate the following to formal Arabic (MSA). Output only the translation, no preamble.',
+      messages: [{ role: 'user', content: text }]
+    });
+    const options = {
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1000,
-        system: 'Translate the following to formal Arabic (MSA). Output only the translation, no preamble, no explanation.',
-        messages: [{ role: 'user', content: text }]
-      })
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    };
+    const req = require('https').request(options, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        try {
+          const d = JSON.parse(data);
+          resolve(d.content?.[0]?.text || text);
+        } catch(e) { resolve(text); }
+      });
     });
-    const d = await res.json();
-    return d.content?.[0]?.text || text;
-  } catch (e) {
-    return text; // fallback to original if translation fails
-  }
+    req.on('error', () => resolve(text));
+    req.write(body);
+    req.end();
+  });
+}
 }
 
 // Check if text is primarily Arabic
