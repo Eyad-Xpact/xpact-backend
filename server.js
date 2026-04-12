@@ -109,5 +109,62 @@ app.post('/generate-pptx', async (req, res) => {
     }
 });
 
+
+// RFP Qualification & Scoring
+app.post('/score-rfp', async (req, res) => {
+  try {
+    const { rfpText } = req.body;
+    if (!rfpText || rfpText.length < 20) {
+      return res.status(400).json({ error: 'RFP text required' });
+    }
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
+
+    const prompt = 'Score this RFP for Xpact (Saudi event management company in Riyadh). Return ONLY valid JSON with no markdown:\n{"score":0-100,"recommendation":"Pursue|Consider|Pass","budget_fit":0-100,"timeline":0-100,"event_type_match":0-100,"scope_complexity":0-100,"strategic_value":0-100,"key_risks":["str","str"],"opportunities":["str","str"],"summary":"2 sentence summary"}\n\nRFP:\n' + rfpText.slice(0, 3000);
+
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 700,
+      system: 'Return ONLY valid JSON. No markdown. No explanation.',
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    const options = {
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(body)
+      }
+    };
+
+    const result = await new Promise((resolve, reject) => {
+      const request = https.request(options, (response) => {
+        let data = '';
+        response.on('data', chunk => data += chunk);
+        response.on('end', () => {
+          try {
+            const d = JSON.parse(data);
+            const text = d.content && d.content[0] ? d.content[0].text : '';
+            const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            resolve(JSON.parse(clean));
+          } catch(e) { reject(new Error('Parse error: ' + e.message)); }
+        });
+      });
+      request.on('error', reject);
+      request.write(body);
+      request.end();
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('Score RFP error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log('XPACT API on port ' + PORT));
