@@ -395,11 +395,35 @@ app.get('/rfp-status', (req, res) => {
     cached: true
   });
 });
+// ── DEBUG: see exactly what Etimad returns to Railway ─────
+app.get('/debug-etimad', async (req, res) => {
+  try {
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    await page.goto('https://tenders.etimad.sa/Tender/AllTendersForVisitor?PageNumber=1', {
+      waitUntil: 'networkidle2', timeout: 30000
+    });
+    await new Promise(r => setTimeout(r, 3000));
+    const result = await page.evaluate(() => ({
+      title: document.title,
+      url: location.href,
+      bodyLength: document.body.innerHTML.length,
+      tenderLinks: Array.from(document.querySelectorAll('a[href*="DetailsForVisitor"]'))
+        .slice(0, 5).map(a => ({ text: a.innerText.trim(), href: a.href })),
+      allLinks: Array.from(document.querySelectorAll('a')).length,
+      bodySnippet: document.body.innerText.slice(0, 600)
+    }));
+    await page.close();
+    res.json(result);
+  } catch(e) {
+    res.json({ error: e.message, stack: e.stack });
+  }
+});
 
 // ── Start ──────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log('XPACT API on port ' + PORT);
-  // Warm up the browser on startup
   getBrowser().catch(e => console.error('Browser warmup failed:', e.message));
 });
