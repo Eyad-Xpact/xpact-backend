@@ -59,29 +59,30 @@ function callClaude(prompt, maxTokens, cb) {
 
 const FORSAH_API = 'forsah-api.910ths.sa';
 
-const EVENT_KEYWORDS = [
-  'فعاليات','فعالية','حفل','حفلات','معرض','معارض',
-  'مؤتمر','مؤتمرات','ملتقى','احتفال','احتفالية',
-  'ندوة','منتدى','إكسبو','أمسية','تنظيم','أوبرا',
-  'معرض فني','حفل موسيقي','مسرح','عروض','ترفيه',
-  'event','events','conference','exhibition','expo',
-  'ceremony','gala','seminar','forum','festival',
-  'concert','entertainment','show','stage'
-];
+// ── Forsah event category IDs (exact match — no false positives) ──
+const EVENT_CATEGORY_IDS = new Set([
+  'c7976728-fa31-44c6-b554-7cc6f0f1fcd5', // تنظيم الفعاليات والمؤتمرات
+  'bb7b0e4d-aae4-4b58-89ea-93d57271e1ec', // تنظيم المعارض والمؤتمرات والضيافة
+  'd956b1b7-77f0-4f6b-ab25-f3160c67c2f0', // خدمات الضيافة والتموين
+  '339f5ae2-faa2-4e86-b2be-828609a0f895', // الدعاية والإعلام
+  'bf49ea01-245e-4062-b76e-362aa88432f4', // الدعاية و الإعلان والتسويق
+]);
 
 function isEventRelated(title, categories) {
-  const text = (title || '').toLowerCase();
-  const cats = (categories || []).map(c => (c.name && c.name.ar ? c.name.ar : (c.nameAr || c.name || ''))).join(' ').toLowerCase();
-  const combined = text + ' ' + cats;
-  return EVENT_KEYWORDS.some(kw => combined.includes(kw.toLowerCase()));
+  if (!categories || categories.length === 0) return false;
+  return categories.some(c => EVENT_CATEGORY_IDS.has(c.id || c.key || c));
 }
 
 function scoreRelevance(title, categories) {
-  let score = 50;
-  const text = ((title || '') + ' ' + (categories || []).map(c => c.nameAr || '').join(' ')).toLowerCase();
-  const hits = EVENT_KEYWORDS.filter(kw => text.includes(kw.toLowerCase()));
-  score += Math.min(40, hits.length * 10);
-  return Math.min(100, score);
+  // Base score for passing the category filter
+  let score = 70;
+  const catNames = (categories || []).map(c => (c.name && c.name.ar) || c.nameAr || '').join(' ');
+  // Boost for primary event category
+  if (catNames.includes('تنظيم الفعاليات')) score = 95;
+  else if (catNames.includes('المعارض والمؤتمرات')) score = 90;
+  else if (catNames.includes('الضيافة')) score = 80;
+  else if (catNames.includes('الدعاية')) score = 75;
+  return score;
 }
 
 function forsahGet(path) {
@@ -168,7 +169,8 @@ async function fetchAllForsahEvents() {
           budgetMin: item.valueRange ? (item.valueRange.min || 0) : 0,
           daysLeft: (daysLeft !== null && daysLeft !== undefined) ? Math.max(0, Math.round(daysLeft)) : null,
           source: 'Forsah',
-          tenderUrl: `https://forsah.sa/marketplace/${item.id}`
+          tenderUrl: `https://forsah.sa/marketplace/${item.id}`,
+          rawCategories: item.categories || []
         });
       }
     }
@@ -199,7 +201,7 @@ async function runDiscovery() {
     const scored = fresh
       .map(t => ({
         ...t,
-        relevanceScore: scoreRelevance(t.title, []),
+        relevanceScore: scoreRelevance(t.title, t.rawCategories || []),
         isNew: !prevIds.has(t.id)
       }))
       .sort((a, b) => b.relevanceScore - a.relevanceScore);
