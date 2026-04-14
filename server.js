@@ -1,322 +1,107 @@
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
-const puppeteer = require('puppeteer');
 const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// ── Health check ───────────────────────────────────────────
+// ── Health check ────────────────────────────────────────────
 app.get('/', (req, res) => {
-  res.json({ status: 'XPACT Proposal API', version: '2.0', ready: true });
+  res.json({ status: 'XPACT Proposal API', version: '3.0', ready: true });
 });
 
-// ── Score RFP ──────────────────────────────────────────────
+// ── Score RFP ───────────────────────────────────────────────
 app.post('/score-rfp', async (req, res) => {
   const { rfpText } = req.body;
   if (!rfpText) return res.status(400).json({ error: 'rfpText required' });
-
   const prompt = `You are an expert event management consultant. Analyze this RFP and return ONLY a JSON object with this exact structure:
-{
-  "score": <number 0-100>,
-  "recommendation": "<Pursue|Consider|Pass>",
-  "summary": "<2 sentence summary>",
-  "criteria": {
-    "budgetFit": <0-20>,
-    "timeline": <0-20>,
-    "eventTypeMatch": <0-20>,
-    "scopeComplexity": <0-20>,
-    "strategicValue": <0-20>
-  },
-  "risks": ["<risk1>", "<risk2>", "<risk3>"],
-  "opportunities": ["<opp1>", "<opp2>", "<opp3>"]
-}
-
-RFP TEXT:
-${rfpText.slice(0, 4000)}`;
-
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
-
-  const requestBody = JSON.stringify({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1000,
-    messages: [{ role: 'user', content: prompt }]
+{"score":<0-100>,"recommendation":"<Pursue|Consider|Pass>","summary":"<2 sentence summary>","criteria":{"budgetFit":<0-20>,"timeline":<0-20>,"eventTypeMatch":<0-20>,"scopeComplexity":<0-20>,"strategicValue":<0-20>},"risks":["<r1>","<r2>","<r3>"],"opportunities":["<o1>","<o2>","<o3>"]}
+RFP TEXT:\n${rfpText.slice(0, 4000)}`;
+  callClaude(prompt, 1000, (err, text) => {
+    if (err) return res.status(500).json({ error: err });
+    try { res.json(JSON.parse(text.replace(/```json|```/g, '').trim())); }
+    catch(e) { res.status(500).json({ error: 'Parse error' }); }
   });
-
-  const options = {
-    hostname: 'api.anthropic.com',
-    path: '/v1/messages',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Length': Buffer.byteLength(requestBody)
-    }
-  };
-
-  const apiReq = https.request(options, (apiRes) => {
-    let data = '';
-    apiRes.on('data', chunk => data += chunk);
-    apiRes.on('end', () => {
-      try {
-        const parsed = JSON.parse(data);
-        const text = parsed.content[0].text;
-        const clean = text.replace(/```json|```/g, '').trim();
-        res.json(JSON.parse(clean));
-      } catch (e) {
-        res.status(500).json({ error: 'Parse error', raw: data.slice(0, 200) });
-      }
-    });
-  });
-  apiReq.on('error', err => res.status(500).json({ error: err.message }));
-  apiReq.write(requestBody);
-  apiReq.end();
 });
 
-// ── Generate section ───────────────────────────────────────
-app.post('/generate-section', async (req, res) => {
+// ── Generate section ─────────────────────────────────────────
+app.post('/generate-section', (req, res) => {
   const { prompt, section } = req.body;
   if (!prompt) return res.status(400).json({ error: 'prompt required' });
-
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'API key not configured' });
-
-  const requestBody = JSON.stringify({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 1000,
-    messages: [{ role: 'user', content: prompt }]
+  callClaude(prompt, 1000, (err, text) => {
+    if (err) return res.status(500).json({ error: err });
+    res.json({ text, section });
   });
-
-  const options = {
-    hostname: 'api.anthropic.com',
-    path: '/v1/messages',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Length': Buffer.byteLength(requestBody)
-    }
-  };
-
-  const apiReq = https.request(options, (apiRes) => {
-    let data = '';
-    apiRes.on('data', chunk => data += chunk);
-    apiRes.on('end', () => {
-      try {
-        const parsed = JSON.parse(data);
-        res.json({ text: parsed.content[0].text, section });
-      } catch (e) {
-        res.status(500).json({ error: 'Parse error' });
-      }
-    });
-  });
-  apiReq.on('error', err => res.status(500).json({ error: err.message }));
-  apiReq.write(requestBody);
-  apiReq.end();
 });
 
-// ============================================================
-// RFP DISCOVERY MODULE — Puppeteer-based Etimad scraper
-// ============================================================
-
-// ── Persistent browser singleton ──────────────────────────
-let _browser = null;
-
-async function getBrowser() {
-  if (_browser) {
-    try { await _browser.version(); return _browser; } catch(e) { _browser = null; }
-  }
-  console.log('Launching headless Chrome...');
-  _browser = await puppeteer.launch({
-    headless: 'new',
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--disable-default-apps'
-    ]
+function callClaude(prompt, maxTokens, cb) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return cb('API key not configured');
+  const body = JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] });
+  const opts = { hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Length': Buffer.byteLength(body) } };
+  const req = https.request(opts, (res) => {
+    let data = '';
+    res.on('data', c => data += c);
+    res.on('end', () => {
+      try { cb(null, JSON.parse(data).content[0].text); }
+      catch(e) { cb('Parse error: ' + data.slice(0, 100)); }
+    });
   });
-  console.log('Chrome ready.');
-  return _browser;
+  req.on('error', e => cb(e.message));
+  req.write(body);
+  req.end();
 }
 
-// ── Event keywords ─────────────────────────────────────────
+// ============================================================
+// RFP DISCOVERY — Forsah public API (no login needed)
+// ============================================================
+
+const FORSAH_API = 'forsah-api.910ths.sa';
+
 const EVENT_KEYWORDS = [
   'فعاليات','فعالية','حفل','حفلات','معرض','معارض',
   'مؤتمر','مؤتمرات','ملتقى','احتفال','احتفالية',
-  'ندوة','منتدى','إكسبو','أمسية','تنظيم فعالية',
-  'حفلة','يوم وطني','العيد','برنامج ترفيه','أوبرا',
+  'ندوة','منتدى','إكسبو','أمسية','تنظيم','أوبرا',
+  'معرض فني','حفل موسيقي','مسرح','عروض','ترفيه',
   'event','events','conference','exhibition','expo',
-  'ceremony','gala','seminar','forum','festival','concert'
+  'ceremony','gala','seminar','forum','festival',
+  'concert','entertainment','show','stage'
 ];
 
-function isEventRelated(text) {
-  const t = (text || '').toLowerCase();
-  return EVENT_KEYWORDS.some(kw => t.includes(kw.toLowerCase()));
+function isEventRelated(title, categories) {
+  const text = (title || '').toLowerCase();
+  const cats = (categories || []).map(c => (c.name && c.name.ar ? c.name.ar : (c.nameAr || c.name || ''))).join(' ').toLowerCase();
+  const combined = text + ' ' + cats;
+  return EVENT_KEYWORDS.some(kw => combined.includes(kw.toLowerCase()));
 }
 
-function scoreRelevance(title, agency) {
-  let score = 40;
-  const text = ((title||'') + ' ' + (agency||'')).toLowerCase();
+function scoreRelevance(title, categories) {
+  let score = 50;
+  const text = ((title || '') + ' ' + (categories || []).map(c => c.nameAr || '').join(' ')).toLowerCase();
   const hits = EVENT_KEYWORDS.filter(kw => text.includes(kw.toLowerCase()));
-  score += Math.min(30, hits.length * 8);
+  score += Math.min(40, hits.length * 10);
   return Math.min(100, score);
 }
 
-// ── Scrape one Etimad page ─────────────────────────────────
-async function scrapeEtimadPage(keyword) {
-  const browser = await getBrowser();
-  const page = await browser.newPage();
-
-  try {
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-    );
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'ar-SA,ar;q=0.9,en;q=0.8' });
-
-    const url = keyword
-      ? `https://tenders.etimad.sa/Tender/AllTendersForVisitor?PageNumber=1&searchText=${encodeURIComponent(keyword)}`
-      : 'https://tenders.etimad.sa/Tender/AllTendersForVisitor?PageNumber=1';
-
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-
-    // Wait a moment for any JS rendering
-    await new Promise(r => setTimeout(r, 2000));
-
-    const tenders = await page.evaluate(() => {
-      const results = [];
-      const seen = new Set();
-
-      document.querySelectorAll('a[href*="DetailsForVisitor"]').forEach(a => {
-        const href = a.href;
-        const title = (a.innerText || '').trim();
-
-        // Skip "التفاصيل" and short/duplicate links
-        if (!title || title === 'التفاصيل' || title.length < 8) return;
-        if (seen.has(href)) return;
-        seen.add(href);
-
-        // Walk up to find the containing card
-        let card = a;
-        for (let i = 0; i < 8; i++) {
-          if (!card.parentElement) break;
-          card = card.parentElement;
-          if (card.innerText && card.innerText.length > 80) break;
-        }
-        const rawText = (card.innerText || '').replace(/\s+/g, ' ').trim();
-
-        // Extract publish date
-        const dateMatch = rawText.match(/(\d{4}-\d{2}-\d{2})/);
-
-        // Extract agency — usually the last meaningful line
-        const lines = rawText.split(/[\n|]/)
-          .map(l => l.trim())
-          .filter(l => l.length > 5 && l !== title && l !== 'التفاصيل');
-        const agency = lines.find(l =>
-          l.includes('وزارة') || l.includes('هيئة') || l.includes('أمانة') ||
-          l.includes('جامعة') || l.includes('مستشفى') || l.includes('المديرية') ||
-          l.includes('الرئاسة') || l.includes('إدارة') || l.includes('مركز') ||
-          l.includes('شركة') || l.includes('الشؤون') || l.includes('الديوان')
-        ) || lines[lines.length - 1] || '';
-
-        results.push({ title, href, rawText, date: dateMatch ? dateMatch[1] : '', agency });
-      });
-
-      return results;
-    });
-
-    return tenders;
-  } catch (e) {
-    console.error('Etimad scrape error:', e.message);
-    return [];
-  } finally {
-    await page.close();
-  }
-}
-
-// ── Main Etimad fetcher (3 keyword passes) ─────────────────
-async function fetchEtimad() {
-  try {
-    const keywords = ['فعاليات', 'مؤتمرات', 'معارض'];
-    const allResults = [];
-    const seen = new Set();
-
-    for (const kw of keywords) {
-      const results = await scrapeEtimadPage(kw);
-      for (const t of results) {
-        if (!seen.has(t.href)) {
-          seen.add(t.href);
-          if (isEventRelated(t.title + ' ' + t.agency)) {
-            allResults.push({
-              id: 'etim_' + Buffer.from(t.href).toString('base64').slice(0, 16),
-              title: t.title,
-              agency: t.agency,
-              deadline: t.date,
-              budget: 0,
-              status: 'نشط',
-              source: 'Etimad',
-              tenderUrl: t.href
-            });
-          }
-        }
-      }
-    }
-
-    // Also scrape page 1 without keyword to catch anything missed
-    const generalResults = await scrapeEtimadPage(null);
-    for (const t of generalResults) {
-      if (!seen.has(t.href) && isEventRelated(t.title + ' ' + t.agency)) {
-        seen.add(t.href);
-        allResults.push({
-          id: 'etim_' + Buffer.from(t.href).toString('base64').slice(0, 16),
-          title: t.title,
-          agency: t.agency,
-          deadline: t.date,
-          budget: 0,
-          status: 'نشط',
-          source: 'Etimad',
-          tenderUrl: t.href
-        });
-      }
-    }
-
-    console.log(`Etimad: found ${allResults.length} event tenders`);
-    return allResults;
-  } catch (e) {
-    console.error('fetchEtimad error:', e.message);
-    return [];
-  }
-}
-
-// ── FURSA (kept as HTTP — adjust if needed) ────────────────
-function httpsFetch(hostname, path, extraHeaders) {
+function forsahGet(path) {
   return new Promise((resolve) => {
     const opts = {
-      hostname, path, method: 'GET',
+      hostname: FORSAH_API,
+      path,
+      method: 'GET',
       headers: {
-        'Accept': 'application/json, */*',
-        'User-Agent': 'Mozilla/5.0 (compatible; XpactAI/1.0)',
-        'Accept-Language': 'ar,en;q=0.9',
-        ...extraHeaders
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (compatible; XpactAI/3.0)',
+        'Origin': 'https://forsah.sa',
+        'Referer': 'https://forsah.sa/'
       },
-      timeout: 12000
+      timeout: 15000
     };
     const req = https.request(opts, (res) => {
       let raw = '';
       res.on('data', c => raw += c);
-      res.on('end', () => resolve({ ok: res.statusCode < 400, data: raw }));
+      res.on('end', () => resolve({ ok: res.statusCode < 400, status: res.statusCode, data: raw }));
     });
     req.on('error', () => resolve({ ok: false, data: null }));
     req.on('timeout', () => { req.destroy(); resolve({ ok: false, data: null }); });
@@ -324,41 +109,75 @@ function httpsFetch(hostname, path, extraHeaders) {
   });
 }
 
-async function fetchFursa() {
-  try {
-    const r = await httpsFetch('fursa.sa', '/api/v1/rfp?status=open&page=1&limit=50', {});
-    if (!r.ok || !r.data) return [];
-    const p = JSON.parse(r.data);
-    const list = p.data || p.rfps || p.results || (Array.isArray(p) ? p : []);
-    if (!Array.isArray(list)) return [];
-    return list.map(t => ({
-      id: 'furs_' + (t.id || t._id || Math.random().toString(36).slice(2, 10)),
-      title: t.title || t.rfpTitle || t.name || 'فرصة',
-      agency: t.companyName || t.company || t.organization || '',
-      deadline: t.deadline || t.closingDate || t.endDate || '',
-      budget: parseFloat(t.budget || t.value || 0) || 0,
-      status: t.status || 'مفتوح',
-      source: 'FURSA',
-      tenderUrl: (t.id || t._id) ? `https://fursa.sa/rfp/${t.id || t._id}` : 'https://fursa.sa'
-    }));
-  } catch (e) { console.log('FURSA error:', e.message); return []; }
+async function fetchForsahPage(page) {
+  const r = await forsahGet(`/api/v1/opportunities?perPage=50&page=${page}`);
+  if (!r.ok || !r.data) return null;
+  try { return JSON.parse(r.data); }
+  catch(e) { return null; }
 }
 
-// ── In-memory cache ────────────────────────────────────────
-let rfpCache = { tenders: [], lastFetch: null, prevIds: [], newCount: 0 };
+async function fetchAllForsahEvents() {
+  const results = [];
+  let page = 1;
+  let totalPages = 1;
 
-// ── /discover-rfps ─────────────────────────────────────────
-app.get('/discover-rfps', async (req, res) => {
+  // Fetch up to 10 pages (500 opportunities) — enough to find all event-related ones
+  while (page <= Math.min(totalPages, 10)) {
+    console.log(`Fetching Forsah page ${page}/${totalPages}...`);
+    const data = await fetchForsahPage(page);
+
+    if (!data || !data.result) break;
+
+    // Set total pages from first response
+    if (page === 1 && data.pagination) {
+      totalPages = data.pagination.pageCount || 1;
+      console.log(`Forsah total: ${data.pagination.totalCount} opportunities across ${totalPages} pages`);
+    }
+
+    for (const item of data.result) {
+      if (isEventRelated(item.title, item.categories)) {
+        results.push({
+          id: 'fors_' + item.id,
+          title: item.title || '',
+          agency: item.publisher ? (item.publisher.nameAr || item.publisher.name || '') : '',
+          deadline: item.dueDate || item.closeDate || (item.daysToGo ? `${item.daysToGo} يوم` : ''),
+          budget: item.valueRange ? `${(item.valueRange.nameAr || item.valueRange.name || '')} (${(item.valueRange.min || 0).toLocaleString()}–${(item.valueRange.max || 0).toLocaleString()} ر.س)` : '',
+          budgetMin: item.valueRange ? (item.valueRange.min || 0) : 0,
+          daysLeft: item.daysToGo || null,
+          status: item.status || 'مفتوح',
+          source: 'Forsah',
+          tenderUrl: `https://forsah.sa/opportunities/${item.id}`
+        });
+      }
+    }
+
+    page++;
+    // Small delay to be respectful to the API
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  return results;
+}
+
+// ── Cache ───────────────────────────────────────────────────
+let rfpCache = { tenders: [], lastFetch: null, newCount: 0, scanning: false };
+
+async function runDiscovery() {
+  if (rfpCache.scanning) {
+    console.log('Discovery already running, skipping');
+    return;
+  }
+  rfpCache.scanning = true;
+  console.log('Starting Forsah discovery scan...');
+
   try {
     const prevIds = new Set(rfpCache.tenders.map(t => t.id));
+    const fresh = await fetchAllForsahEvents();
 
-    const [etimadRaw, fursaRaw] = await Promise.all([fetchEtimad(), fetchFursa()]);
-    const all = [...etimadRaw, ...fursaRaw];
-
-    const scored = all
+    const scored = fresh
       .map(t => ({
         ...t,
-        relevanceScore: scoreRelevance(t.title, t.agency),
+        relevanceScore: scoreRelevance(t.title, []),
         isNew: !prevIds.has(t.id)
       }))
       .sort((a, b) => b.relevanceScore - a.relevanceScore);
@@ -366,64 +185,59 @@ app.get('/discover-rfps', async (req, res) => {
     rfpCache = {
       tenders: scored,
       lastFetch: new Date().toISOString(),
-      prevIds: [...prevIds],
-      newCount: scored.filter(t => t.isNew).length
+      newCount: scored.filter(t => t.isNew).length,
+      scanning: false
     };
 
-    res.json({
-      tenders: scored,
-      lastFetch: rfpCache.lastFetch,
-      newCount: rfpCache.newCount,
-      total: scored.length,
-      sources: {
-        etimad: etimadRaw.length,
-        fursa: fursaRaw.length
-      }
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message, tenders: [], total: 0 });
+    console.log(`Discovery complete: ${scored.length} event tenders found (${rfpCache.newCount} new)`);
+  } catch(e) {
+    console.error('Discovery error:', e.message);
+    rfpCache.scanning = false;
   }
+}
+
+// ── Endpoints ───────────────────────────────────────────────
+app.get('/discover-rfps', async (req, res) => {
+  // Kick off scan in background, return current cache immediately
+  if (!rfpCache.scanning) runDiscovery();
+
+  res.json({
+    tenders: rfpCache.tenders,
+    lastFetch: rfpCache.lastFetch,
+    newCount: rfpCache.newCount,
+    total: rfpCache.tenders.length,
+    scanning: rfpCache.scanning,
+    message: rfpCache.tenders.length === 0 ? 'First scan in progress, check back in 30 seconds' : 'Background refresh started'
+  });
 });
 
-// ── /rfp-status (cached, instant) ─────────────────────────
 app.get('/rfp-status', (req, res) => {
   res.json({
     tenders: rfpCache.tenders,
     lastFetch: rfpCache.lastFetch,
     newCount: rfpCache.newCount,
     total: rfpCache.tenders.length,
+    scanning: rfpCache.scanning,
     cached: true
   });
 });
-// ── DEBUG: see exactly what Etimad returns to Railway ─────
-app.get('/debug-etimad', async (req, res) => {
-  try {
-    const browser = await getBrowser();
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-    await page.goto('https://tenders.etimad.sa/Tender/AllTendersForVisitor?PageNumber=1', {
-      waitUntil: 'networkidle2', timeout: 30000
-    });
-    await new Promise(r => setTimeout(r, 3000));
-    const result = await page.evaluate(() => ({
-      title: document.title,
-      url: location.href,
-      bodyLength: document.body.innerHTML.length,
-      tenderLinks: Array.from(document.querySelectorAll('a[href*="DetailsForVisitor"]'))
-        .slice(0, 5).map(a => ({ text: a.innerText.trim(), href: a.href })),
-      allLinks: Array.from(document.querySelectorAll('a')).length,
-      bodySnippet: document.body.innerText.slice(0, 600)
-    }));
-    await page.close();
-    res.json(result);
-  } catch(e) {
-    res.json({ error: e.message, stack: e.stack });
-  }
+
+// Manual full refresh
+app.post('/refresh-rfps', async (req, res) => {
+  rfpCache.scanning = false; // allow restart
+  runDiscovery();
+  res.json({ message: 'Full scan started', scanning: true });
 });
 
-// ── Start ──────────────────────────────────────────────────
+// ── Auto-scan every 6 hours ──────────────────────────────────
+const SIX_HOURS = 6 * 60 * 60 * 1000;
+setTimeout(() => {
+  runDiscovery();
+  setInterval(runDiscovery, SIX_HOURS);
+}, 5000); // 5s after startup to let server settle
+
+// ── Start ───────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('XPACT API on port ' + PORT);
-  getBrowser().catch(e => console.error('Browser warmup failed:', e.message));
+  console.log(`XPACT API v3.0 on port ${PORT}`);
 });
