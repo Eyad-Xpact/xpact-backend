@@ -168,7 +168,7 @@ async function fetchAllForsahEvents() {
           budgetMin: item.valueRange ? (item.valueRange.min || 0) : 0,
           daysLeft: (daysLeft !== null && daysLeft !== undefined) ? Math.max(0, Math.round(daysLeft)) : null,
           source: 'Forsah',
-          tenderUrl: `https://forsah.sa/opportunities/${item.id}`
+          tenderUrl: `https://forsah.sa/marketplace/${item.id}`
         });
       }
     }
@@ -242,16 +242,6 @@ app.get('/rfp-status', (req, res) => {
     scanning: rfpCache.scanning,
     cached: true
   });
-});
-
-// Set qualification status on a tender
-app.post('/qualify-rfp', (req, res) => {
-  const { id, qualified } = req.body;
-  if (!id) return res.status(400).json({ error: 'id required' });
-  const tender = rfpCache.tenders.find(t => t.id === id);
-  if (!tender) return res.status(404).json({ error: 'tender not found' });
-  tender.qualified = qualified; // true = مؤهل, false = غير مؤهل, null = unset
-  res.json({ success: true, id, qualified });
 });
 
 // Manual full refresh
