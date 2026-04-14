@@ -8,7 +8,7 @@ app.use(express.json({ limit: '50mb' }));
 
 // ── Health check ────────────────────────────────────────────
 app.get('/', (req, res) => {
-  res.json({ status: 'XPACT Proposal API', version: '3.0', ready: true });
+  res.json({ status: 'XPACT Proposal API', version: '3.1', ready: true });
 });
 
 // ── Score RFP ───────────────────────────────────────────────
@@ -135,16 +135,36 @@ async function fetchAllForsahEvents() {
     }
 
     for (const item of data.result) {
-      if (isEventRelated(item.title, item.categories)) {
+      // Only include open opportunities (skip pending/closed)
+      const statusKey = item.statusKey || item.status || '';
+      const isOpen = statusKey.includes('open');
+      if (isOpen && isEventRelated(item.title, item.categories)) {
+        // Calculate days left from dueDate if daysToGo not provided
+        let daysLeft = item.daysToGo;
+        if ((daysLeft === null || daysLeft === undefined) && item.dueDate) {
+          daysLeft = Math.ceil((new Date(item.dueDate) - Date.now()) / 86400000);
+        }
+
+        // Format deadline date nicely
+        const deadlineDate = item.dueDate || item.closeDate || '';
+        let deadlineFormatted = '';
+        if (deadlineDate) {
+          try {
+            const d = new Date(deadlineDate);
+            deadlineFormatted = d.toLocaleDateString('ar-SA', { year: 'numeric', month: 'short', day: 'numeric' });
+          } catch(e) { deadlineFormatted = deadlineDate; }
+        }
+
         results.push({
           id: 'fors_' + item.id,
           title: item.title || '',
           agency: item.publisher ? (item.publisher.nameAr || item.publisher.name || '') : '',
-          deadline: item.dueDate || item.closeDate || (item.daysToGo ? `${item.daysToGo} يوم` : ''),
-          budget: item.valueRange ? `${(item.valueRange.nameAr || item.valueRange.name || '')} (${(item.valueRange.min || 0).toLocaleString()}–${(item.valueRange.max || 0).toLocaleString()} ر.س)` : '',
+          deadline: deadlineFormatted,
+          deadlineRaw: deadlineDate,
+          budget: item.valueRange ? `${(item.valueRange.nameAr || item.valueRange.nameEn || '')} (${(item.valueRange.min || 0).toLocaleString()}–${(item.valueRange.max || 0).toLocaleString()} ر.س)` : '',
+          budgetNote: 'مصدر: منصة فرصة',
           budgetMin: item.valueRange ? (item.valueRange.min || 0) : 0,
-          daysLeft: item.daysToGo || null,
-          status: item.status || 'مفتوح',
+          daysLeft: (daysLeft !== null && daysLeft !== undefined) ? Math.max(0, Math.round(daysLeft)) : null,
           source: 'Forsah',
           tenderUrl: `https://forsah.sa/opportunities/${item.id}`
         });
