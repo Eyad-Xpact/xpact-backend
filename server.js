@@ -135,9 +135,11 @@ async function fetchAllForsahEvents() {
     }
 
     for (const item of data.result) {
-      // Only include open opportunities (skip pending/closed)
-      const statusKey = item.statusKey || item.status || '';
-      const isOpen = statusKey.includes('open');
+      // Whitelist only genuinely open opportunities
+      // statusKey comes as 'open', status as 'dictionary.opportunity.status.open'
+      const sk = (item.statusKey || '').toLowerCase();
+      const st = (item.status || '').toLowerCase();
+      const isOpen = sk === 'open' || st.endsWith('.open');
       if (isOpen && isEventRelated(item.title, item.categories)) {
         // Calculate days left from dueDate if daysToGo not provided
         let daysLeft = item.daysToGo;
