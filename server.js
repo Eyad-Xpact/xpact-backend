@@ -183,6 +183,51 @@ async function fetchAllForsahEvents() {
   return results;
 }
 
+
+// Generate full proposal — all sections in one call
+app.post('/generate-proposal', async (req, res) => {
+  const { rfpText, eventName, client } = req.body;
+  if (!rfpText) return res.status(400).json({ error: 'rfpText required' });
+
+  const sections = [
+    { id: 'executive_summary', title: 'Executive Summary' },
+    { id: 'event_objectives', title: 'Event Objectives' },
+    { id: 'understanding', title: 'Understanding of Requirements' },
+    { id: 'creative_concept', title: 'Creative Concept' },
+    { id: 'production_plan', title: 'Production Plan' },
+    { id: 'logistics', title: 'Logistics & Operations' },
+    { id: 'team', title: 'Team Structure' },
+    { id: 'timeline', title: 'Project Timeline' },
+    { id: 'why_xpact', title: 'Why XPACT' },
+    { id: 'catering', title: 'Catering & Hospitality' }
+  ];
+
+  const results = {};
+  
+  for (const section of sections) {
+    const prompt = `You are a senior event management proposal writer for XPACT, a premium event company in Riyadh, Saudi Arabia.
+
+Write the "${section.title}" section for the following event proposal.
+
+Event: ${eventName || 'Event'}
+Client: ${client || 'Client'}
+
+RFP:
+${rfpText.slice(0, 3000)}
+
+Write 2-4 professional paragraphs for this section. Be specific, confident, and tailored to this RFP. Do not use placeholders.`;
+
+    await new Promise((resolve, reject) => {
+      callClaude(prompt, 800, (err, text) => {
+        if (err) { results[section.id] = ''; resolve(); }
+        else { results[section.id] = text; resolve(); }
+      });
+    });
+  }
+
+  res.json({ sections: results });
+});
+
 // ── Cache ───────────────────────────────────────────────────
 let rfpCache = { tenders: [], lastFetch: null, newCount: 0, scanning: false };
 
